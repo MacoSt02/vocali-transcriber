@@ -21,6 +21,7 @@ jobs:
           filters: |
             backend:
               - 'backend/**'
+              - '.github/workflows/backend-ci.yml'
       - uses: actions/setup-node@v4
         if: steps.filter.outputs.backend == 'true'
         with:

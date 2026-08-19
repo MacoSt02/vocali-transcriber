@@ -21,6 +21,7 @@ jobs:
           filters: |
             frontend:
               - 'frontend/**'
+              - '.github/workflows/frontend-ci.yml'
       - uses: actions/setup-node@v4
         if: steps.filter.outputs.frontend == 'true'
         with:
