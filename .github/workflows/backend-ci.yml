@@ -1,13 +1,47 @@
 name: Backend CI
 on:
   push:
-    paths: ['backend/**']
+    branches: ['main']
   pull_request:
-    paths: ['backend/**']
 
 jobs:
   build-test:
+    name: Backend build-test
     runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.filter.outputs.backend }}
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+      - uses: actions/setup-node@v4
+        if: steps.filter.outputs.backend == 'true'
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+        if: steps.filter.outputs.backend == 'true'
+      - run: npm run lint
+        if: steps.filter.outputs.backend == 'true'
+      - run: npm run build
+        if: steps.filter.outputs.backend == 'true'
+      - run: npm run test:coverage
+        if: steps.filter.outputs.backend == 'true'
+
+  deploy:
+    name: Backend deploy
+    needs: build-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.build-test.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    environment: production
     defaults:
       run:
         working-directory: backend
@@ -19,6 +53,11 @@ jobs:
           cache: 'npm'
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
-      - run: npm run lint
-      - run: npm run build
-      - run: npm run test:coverage
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+      - run: npx serverless deploy --stage prod
+        env:
+          SPEECHMATICS_API_KEY: ${{ secrets.SPEECHMATICS_API_KEY }}
