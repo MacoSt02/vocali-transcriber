@@ -1,13 +1,47 @@
 name: Frontend CI
 on:
   push:
-    paths: ['frontend/**']
+    branches: ['main']
   pull_request:
-    paths: ['frontend/**']
 
 jobs:
   build-test:
+    name: Frontend build-test
     runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.filter.outputs.frontend }}
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'frontend/**'
+      - uses: actions/setup-node@v4
+        if: steps.filter.outputs.frontend == 'true'
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        if: steps.filter.outputs.frontend == 'true'
+      - run: npm run lint
+        if: steps.filter.outputs.frontend == 'true'
+      - run: npm run build
+        if: steps.filter.outputs.frontend == 'true'
+      - run: npm run test:coverage
+        if: steps.filter.outputs.frontend == 'true'
+
+  deploy:
+    name: Frontend deploy
+    needs: build-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.build-test.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    environment: production
     defaults:
       run:
         working-directory: frontend
@@ -19,6 +53,26 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - run: npm run lint
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-west-1
+      - name: Read backend stack outputs
+        id: stack
+        run: |
+          OUTPUTS=$(aws cloudformation describe-stacks \
+            --stack-name vocali-transcriber-api-prod \
+            --query 'Stacks[0].Outputs' --output json)
+          echo "api_url=$(echo "$OUTPUTS" | jq -r '.[] | select(.OutputKey=="ApiUrl").OutputValue')" >> "$GITHUB_OUTPUT"
+          echo "user_pool_id=$(echo "$OUTPUTS" | jq -r '.[] | select(.OutputKey=="UserPoolId").OutputValue')" >> "$GITHUB_OUTPUT"
+          echo "client_id=$(echo "$OUTPUTS" | jq -r '.[] | select(.OutputKey=="UserPoolClientId").OutputValue')" >> "$GITHUB_OUTPUT"
+          echo "bucket=$(echo "$OUTPUTS" | jq -r '.[] | select(.OutputKey=="FrontendBucketName").OutputValue')" >> "$GITHUB_OUTPUT"
+          echo "distribution_id=$(echo "$OUTPUTS" | jq -r '.[] | select(.OutputKey=="FrontendDistributionId").OutputValue')" >> "$GITHUB_OUTPUT"
       - run: npm run build
-      - run: npm run test:coverage
+        env:
+          VITE_API_BASE_URL: ${{ steps.stack.outputs.api_url }}
+          VITE_COGNITO_USER_POOL_ID: ${{ steps.stack.outputs.user_pool_id }}
+          VITE_COGNITO_CLIENT_ID: ${{ steps.stack.outputs.client_id }}
+      - run: aws s3 sync dist/ "s3://${{ steps.stack.outputs.bucket }}" --delete
+      - run: aws cloudfront create-invalidation --distribution-id "${{ steps.stack.outputs.distribution_id }}" --paths "/*"

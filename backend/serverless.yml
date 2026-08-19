@@ -258,6 +258,8 @@ resources:
                   AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}'
 
   Outputs:
+    ApiUrl:
+      Value: !Sub 'https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${sls:stage}'
     UserPoolId:
       Value: !Ref CognitoUserPool
     UserPoolClientId:
