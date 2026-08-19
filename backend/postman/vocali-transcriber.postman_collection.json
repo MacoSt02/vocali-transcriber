@@ -1,0 +1,149 @@
+{
+  "info": {
+    "name": "Vocali Transcriber API",
+    "description": "Flujo completo de transcripcion batch: subir audio -> lanzar job -> listar historial -> descargar. Usa el environment 'Vocali Transcriber - dev' (variable idToken debe rellenarse a mano con el ID token de Cognito, no el access token: el authorizer nativo COGNITO_USER_POOLS de API Gateway solo acepta el ID token). Todas las peticiones fuerzan HTTP/1.1 (protocolProfileBehavior.protocolVersion) porque esta API, servida detras de CloudFront, devuelve 403 AccessDeniedException cuando Postman negocia HTTP/2.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "1. Get upload URL",
+      "protocolProfileBehavior": { "protocolVersion": "http1" },
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{idToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"contentType\": \"audio/mpeg\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/transcriptions/upload-url", "host": ["{{baseUrl}}"], "path": ["transcriptions", "upload-url"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.environment.set('uploadUrl', body.uploadUrl);",
+              "pm.environment.set('audioKey', body.key);",
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "pm.test('devuelve uploadUrl y key', () => {",
+              "  pm.expect(body.uploadUrl).to.be.a('string');",
+              "  pm.expect(body.key).to.be.a('string');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Upload audio to S3",
+      "protocolProfileBehavior": { "protocolVersion": "http1" },
+      "request": {
+        "method": "PUT",
+        "header": [{ "key": "Content-Type", "value": "audio/mpeg" }],
+        "body": { "mode": "file", "file": {} },
+        "url": { "raw": "{{uploadUrl}}", "host": ["{{uploadUrl}}"] },
+        "description": "IMPORTANTE: en la pestana Body, selecciona un fichero de audio real (mp3/wav) en el campo 'file'. No lleva Authorization: la propia URL prefirmada de S3 ya autentica la subida. El Content-Type debe ser audio/mpeg (el mismo que se pidio en el paso 1) o S3 respondera 403 SignatureDoesNotMatch."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"], "type": "text/javascript" }
+        }
+      ]
+    },
+    {
+      "name": "3. Start batch transcription",
+      "protocolProfileBehavior": { "protocolVersion": "http1" },
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{idToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": { "mode": "raw", "raw": "{\n  \"audioKey\": \"{{audioKey}}\"\n}" },
+        "url": { "raw": "{{baseUrl}}/transcriptions", "host": ["{{baseUrl}}"], "path": ["transcriptions"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const body = pm.response.json();",
+              "pm.environment.set('transcriptionId', body.transcriptionId);",
+              "pm.test('status 202', () => pm.response.to.have.status(202));",
+              "pm.test('status PROCESSING', () => pm.expect(body.status).to.eql('PROCESSING'));"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. List history",
+      "protocolProfileBehavior": { "protocolVersion": "http1" },
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{idToken}}" }],
+        "url": { "raw": "{{baseUrl}}/transcriptions", "host": ["{{baseUrl}}"], "path": ["transcriptions"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"], "type": "text/javascript" }
+        }
+      ]
+    },
+    {
+      "name": "5. Download transcription",
+      "protocolProfileBehavior": { "protocolVersion": "http1" },
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{idToken}}" }],
+        "url": {
+          "raw": "{{baseUrl}}/transcriptions/{{transcriptionId}}/download",
+          "host": ["{{baseUrl}}"],
+          "path": ["transcriptions", "{{transcriptionId}}", "download"]
+        },
+        "description": "Da 404 hasta que Speechmatics termine el job y llame al webhook (normalmente unos segundos/minutos, segun la duracion del audio). Reintenta esta peticion."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('status 200 o 404 (si aun no ha terminado)', () => {",
+              "  pm.expect([200, 404]).to.include(pm.response.code);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Get realtime token (opcional)",
+      "protocolProfileBehavior": { "protocolVersion": "http1" },
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Authorization", "value": "Bearer {{idToken}}" }],
+        "url": {
+          "raw": "{{baseUrl}}/transcriptions/realtime/token",
+          "host": ["{{baseUrl}}"],
+          "path": ["transcriptions", "realtime", "token"]
+        },
+        "description": "Genera un JWT temporal de Speechmatics para tiempo real. Aun no hay nada en el frontend que lo use."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": { "exec": ["pm.test('status 200', () => pm.response.to.have.status(200));"], "type": "text/javascript" }
+        }
+      ]
+    }
+  ]
+}

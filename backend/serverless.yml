@@ -1,0 +1,272 @@
+service: vocali-transcriber-api
+
+frameworkVersion: '4'
+
+build:
+  esbuild: false
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  region: eu-west-1
+  stage: ${opt:stage, 'dev'}
+  environment:
+    AUDIO_BUCKET: ${self:custom.audioBucket}
+    TRANSCRIPTIONS_TABLE: ${self:custom.tableName}
+    SPEECHMATICS_API_KEY: ${env:SPEECHMATICS_API_KEY, ''}
+    SPEECHMATICS_WEBHOOK_URL: !Sub 'https://${ApiGatewayRestApi}.execute-api.${AWS::Region}.amazonaws.com/${sls:stage}/webhooks/speechmatics'
+    COGNITO_USER_POOL_ID: !Ref CognitoUserPool
+    COGNITO_CLIENT_ID: !Ref CognitoUserPoolClient
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:GetItem
+            - dynamodb:Query
+            - dynamodb:UpdateItem
+          Resource:
+            - !GetAtt TranscriptionsTable.Arn
+            - !Sub '${TranscriptionsTable.Arn}/index/*'
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+            - s3:GetObject
+          Resource: !Sub '${AudioBucket.Arn}/*'
+
+custom:
+  audioBucket: vocali-audio-${sls:stage}-${aws:accountId}
+  frontendBucket: vocali-frontend-${sls:stage}-${aws:accountId}
+  tableName: vocali-transcriptions-${sls:stage}
+  esbuild:
+    bundle: true
+    minify: false
+    sourcemap: true
+
+plugins:
+  - serverless-esbuild
+  - serverless-offline
+  - serverless-dotenv-plugin
+
+functions:
+  uploadUrl:
+    handler: src/functions/transcriptions/getUploadUrl.handler
+    events:
+      - http:
+          path: /transcriptions/upload-url
+          method: post
+          cors: true
+          authorizer:
+            name: cognitoAuthorizer
+            type: COGNITO_USER_POOLS
+            arn: !GetAtt CognitoUserPool.Arn
+
+  startBatchTranscription:
+    handler: src/functions/transcriptions/startBatchTranscription.handler
+    events:
+      - http:
+          path: /transcriptions
+          method: post
+          cors: true
+          authorizer:
+            name: cognitoAuthorizer
+            type: COGNITO_USER_POOLS
+            arn: !GetAtt CognitoUserPool.Arn
+
+  speechmaticsWebhook:
+    handler: src/functions/transcriptions/speechmaticsWebhook.handler
+    events:
+      - http:
+          path: /webhooks/speechmatics
+          method: post
+          cors: true
+
+  realtimeToken:
+    handler: src/functions/transcriptions/getRealtimeToken.handler
+    events:
+      - http:
+          path: /transcriptions/realtime/token
+          method: post
+          cors: true
+          authorizer:
+            name: cognitoAuthorizer
+            type: COGNITO_USER_POOLS
+            arn: !GetAtt CognitoUserPool.Arn
+
+  saveRealtimeTranscription:
+    handler: src/functions/transcriptions/saveRealtimeTranscription.handler
+    events:
+      - http:
+          path: /transcriptions/realtime
+          method: post
+          cors: true
+          authorizer:
+            name: cognitoAuthorizer
+            type: COGNITO_USER_POOLS
+            arn: !GetAtt CognitoUserPool.Arn
+
+  listHistory:
+    handler: src/functions/transcriptions/listHistory.handler
+    events:
+      - http:
+          path: /transcriptions
+          method: get
+          cors: true
+          authorizer:
+            name: cognitoAuthorizer
+            type: COGNITO_USER_POOLS
+            arn: !GetAtt CognitoUserPool.Arn
+
+  downloadTranscription:
+    handler: src/functions/transcriptions/downloadTranscription.handler
+    events:
+      - http:
+          path: /transcriptions/{id}/download
+          method: get
+          cors: true
+          authorizer:
+            name: cognitoAuthorizer
+            type: COGNITO_USER_POOLS
+            arn: !GetAtt CognitoUserPool.Arn
+
+resources:
+  Resources:
+    CognitoUserPool:
+      Type: AWS::Cognito::UserPool
+      Properties:
+        UserPoolName: vocali-users-${sls:stage}
+        AutoVerifiedAttributes: [email]
+        UsernameAttributes: [email]
+        Policies:
+          PasswordPolicy:
+            MinimumLength: 8
+            RequireUppercase: true
+            RequireLowercase: true
+            RequireNumbers: true
+
+    CognitoUserPoolClient:
+      Type: AWS::Cognito::UserPoolClient
+      Properties:
+        UserPoolId: !Ref CognitoUserPool
+        ClientName: vocali-web-client-${sls:stage}
+        ExplicitAuthFlows:
+          - ALLOW_USER_SRP_AUTH
+          - ALLOW_USER_PASSWORD_AUTH
+          - ALLOW_REFRESH_TOKEN_AUTH
+        GenerateSecret: false
+
+    AudioBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.audioBucket}
+        CorsConfiguration:
+          CorsRules:
+            - AllowedMethods: [PUT, GET]
+              AllowedOrigins: ['*']
+              AllowedHeaders: ['*']
+              MaxAge: 3000
+
+    TranscriptionsTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.tableName}
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: userId
+            AttributeType: S
+          - AttributeName: transcriptionId
+            AttributeType: S
+          - AttributeName: createdAt
+            AttributeType: S
+        KeySchema:
+          - AttributeName: userId
+            KeyType: HASH
+          - AttributeName: transcriptionId
+            KeyType: RANGE
+        GlobalSecondaryIndexes:
+          - IndexName: userId-createdAt-index
+            KeySchema:
+              - AttributeName: userId
+                KeyType: HASH
+              - AttributeName: createdAt
+                KeyType: RANGE
+            Projection:
+              ProjectionType: ALL
+
+    FrontendBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.frontendBucket}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: true
+          BlockPublicPolicy: true
+          IgnorePublicAcls: true
+          RestrictPublicBuckets: true
+
+    FrontendOriginAccessControl:
+      Type: AWS::CloudFront::OriginAccessControl
+      Properties:
+        OriginAccessControlConfig:
+          Name: vocali-frontend-oac-${sls:stage}
+          OriginAccessControlOriginType: s3
+          SigningBehavior: always
+          SigningProtocol: sigv4
+
+    FrontendDistribution:
+      Type: AWS::CloudFront::Distribution
+      Properties:
+        DistributionConfig:
+          Enabled: true
+          DefaultRootObject: index.html
+          HttpVersion: http2
+          PriceClass: PriceClass_100
+          Origins:
+            - Id: FrontendS3Origin
+              DomainName: !GetAtt FrontendBucket.RegionalDomainName
+              OriginAccessControlId: !Ref FrontendOriginAccessControl
+              S3OriginConfig:
+                OriginAccessIdentity: ''
+          DefaultCacheBehavior:
+            TargetOriginId: FrontendS3Origin
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
+          CustomErrorResponses:
+            - ErrorCode: 403
+              ResponseCode: 200
+              ResponsePagePath: /index.html
+            - ErrorCode: 404
+              ResponseCode: 200
+              ResponsePagePath: /index.html
+
+    FrontendBucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket: !Ref FrontendBucket
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: cloudfront.amazonaws.com
+              Action: s3:GetObject
+              Resource: !Sub '${FrontendBucket.Arn}/*'
+              Condition:
+                StringEquals:
+                  AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}'
+
+  Outputs:
+    UserPoolId:
+      Value: !Ref CognitoUserPool
+    UserPoolClientId:
+      Value: !Ref CognitoUserPoolClient
+    AudioBucketName:
+      Value: !Ref AudioBucket
+    FrontendBucketName:
+      Value: !Ref FrontendBucket
+    FrontendDistributionId:
+      Value: !Ref FrontendDistribution
+    FrontendUrl:
+      Value: !Sub 'https://${FrontendDistribution.DomainName}'
