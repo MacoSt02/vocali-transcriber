@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import NavBar from '../components/NavBar';
 import StatusBadge, { STATUS_LABELS } from '../components/StatusBadge';
 import { fetchTranscriptText, getDownloadUrl, getHistory } from '../services/api';
+import { downloadTextFile } from '../lib/download';
 import { Transcription } from '../types/transcription';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -14,6 +15,8 @@ export default function HistoryPage() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   const [selectedItem, setSelectedItem] = useState<Transcription | null>(null);
   const [modalText, setModalText] = useState<string | null>(null);
@@ -68,6 +71,20 @@ export default function HistoryPage() {
     }
   };
 
+  const handleDownload = async (item: Transcription) => {
+    setDownloadingId(item.transcriptionId);
+    setError(null);
+    try {
+      const { downloadUrl } = await getDownloadUrl(item.transcriptionId);
+      const text = await fetchTranscriptText(downloadUrl);
+      downloadTextFile(`transcripcion-${item.transcriptionId}.txt`, text);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
   const closeModal = (open: boolean) => {
     if (open) return;
     setSelectedItem(null);
@@ -113,6 +130,14 @@ export default function HistoryPage() {
                           disabled={item.status !== 'COMPLETED'}
                         >
                           Ver
+                        </Button>
+                        <Button
+                          variant="link"
+                          size="sm"
+                          onClick={() => handleDownload(item)}
+                          disabled={item.status !== 'COMPLETED' || downloadingId === item.transcriptionId}
+                        >
+                          {downloadingId === item.transcriptionId ? 'Descargando...' : 'Descargar'}
                         </Button>
                       </TableCell>
                     </TableRow>

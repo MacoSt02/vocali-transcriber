@@ -25,9 +25,9 @@ describe('api service', () => {
       data: { uploadUrl: 'https://s3.example.com/put', key: 'audio/u1/abc' },
     });
 
-    const result = await getUploadUrl('audio/mpeg');
+    const result = await getUploadUrl('audio/mpeg', 1024);
 
-    expect(post).toHaveBeenCalledWith('/transcriptions/upload-url', { contentType: 'audio/mpeg' });
+    expect(post).toHaveBeenCalledWith('/transcriptions/upload-url', { contentType: 'audio/mpeg', fileSize: 1024 });
     expect(result).toEqual({ uploadUrl: 'https://s3.example.com/put', key: 'audio/u1/abc' });
   });
 
