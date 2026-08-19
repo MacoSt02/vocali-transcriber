@@ -40,8 +40,8 @@ api.interceptors.response.use(
   }
 );
 
-export async function getUploadUrl(contentType: string): Promise<UploadUrlResponse> {
-  const { data } = await api.post<UploadUrlResponse>('/transcriptions/upload-url', { contentType });
+export async function getUploadUrl(contentType: string, fileSize: number): Promise<UploadUrlResponse> {
+  const { data } = await api.post<UploadUrlResponse>('/transcriptions/upload-url', { contentType, fileSize });
   return data;
 }
 

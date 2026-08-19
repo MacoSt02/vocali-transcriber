@@ -10,6 +10,7 @@ import {
   uploadAudioFile,
 } from '../services/api';
 import { TranscriptionStatus } from '../types/transcription';
+import { downloadTextFile } from '../lib/download';
 import { useRealtimeTranscription } from '../hooks/useRealtimeTranscription';
 import { useRealtimeLanguages } from '../hooks/useRealtimeLanguages';
 import { Button } from '@/components/ui/button';
@@ -23,6 +24,7 @@ type FlowState = 'idle' | 'uploading' | 'processing' | 'completed' | 'failed' | 
 type Mode = 'file' | 'realtime';
 
 const POLL_INTERVAL_MS = 3000;
+const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 
 export default function DashboardPage() {
   const [mode, setMode] = useState<Mode>('file');
@@ -40,7 +42,15 @@ export default function DashboardPage() {
   }, []);
 
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
-    setFile(e.target.files?.[0] ?? null);
+    const selected = e.target.files?.[0] ?? null;
+    if (selected && selected.size > MAX_FILE_SIZE_BYTES) {
+      setErrorMessage('El fichero de audio supera el límite de 20 MB.');
+      setFile(null);
+      e.target.value = '';
+      return;
+    }
+    setErrorMessage(null);
+    setFile(selected);
   };
 
   const resetResult = () => {
@@ -84,7 +94,7 @@ export default function DashboardPage() {
     setState('uploading');
 
     try {
-      const { uploadUrl, key } = await getUploadUrl(file.type || 'audio/mpeg');
+      const { uploadUrl, key } = await getUploadUrl(file.type || 'audio/mpeg', file.size);
       await uploadAudioFile(uploadUrl, file);
       const { transcriptionId: id } = await startTranscription(key);
       setTranscriptionId(id);
@@ -171,9 +181,7 @@ export default function DashboardPage() {
                   </p>
                 )}
 
-                {(state === 'failed' || state === 'error') && errorMessage && (
-                  <p className="mt-3 text-sm text-destructive">{errorMessage}</p>
-                )}
+                {errorMessage && <p className="mt-3 text-sm text-destructive">{errorMessage}</p>}
               </CardContent>
             </Card>
 
@@ -181,9 +189,20 @@ export default function DashboardPage() {
               <Card className="mt-6">
                 <CardHeader className="flex-row items-center justify-between space-y-0">
                   <CardTitle className="text-lg">Transcripción lista</CardTitle>
-                  <Button variant="link" size="sm" onClick={handleReset}>
-                    Transcribir otro audio
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="link"
+                      size="sm"
+                      onClick={() =>
+                        transcriptionId && downloadTextFile(`transcripcion-${transcriptionId}.txt`, transcriptText)
+                      }
+                    >
+                      Descargar
+                    </Button>
+                    <Button variant="link" size="sm" onClick={handleReset}>
+                      Transcribir otro audio
+                    </Button>
+                  </div>
                 </CardHeader>
                 <CardContent>
                   <p className="whitespace-pre-wrap text-sm text-foreground">{transcriptText}</p>

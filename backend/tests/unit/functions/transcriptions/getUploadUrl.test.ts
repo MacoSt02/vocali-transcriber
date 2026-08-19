@@ -14,7 +14,7 @@ const mockGetPresignedUploadUrl = getPresignedUploadUrl as jest.Mock;
 function buildEvent(overrides: Partial<APIGatewayProxyEvent> = {}): APIGatewayProxyEvent {
   return {
     headers: { Authorization: 'Bearer valido' },
-    body: JSON.stringify({ contentType: 'audio/mpeg' }),
+    body: JSON.stringify({ contentType: 'audio/mpeg', fileSize: 1024 }),
     ...overrides,
   } as unknown as APIGatewayProxyEvent;
 }
@@ -39,7 +39,7 @@ describe('getUploadUrl.handler', () => {
     mockGetUserIdFromToken.mockResolvedValue('user-1');
     mockGetPresignedUploadUrl.mockResolvedValue('https://s3.example.com/put');
 
-    await handler(buildEvent({ body: '{}' }));
+    await handler(buildEvent({ body: JSON.stringify({ fileSize: 1024 }) }));
 
     expect(mockGetPresignedUploadUrl).toHaveBeenCalledWith('audio/user-1/fixed-uuid', 'audio/mpeg');
   });
@@ -51,6 +51,27 @@ describe('getUploadUrl.handler', () => {
 
     expect(result.statusCode).toBe(400);
     expect(JSON.parse(result.body)).toEqual({ message: 'Token expired' });
+    expect(mockGetPresignedUploadUrl).not.toHaveBeenCalled();
+  });
+
+  it('devuelve 400 si no se manda fileSize', async () => {
+    mockGetUserIdFromToken.mockResolvedValue('user-1');
+
+    const result = await handler(buildEvent({ body: JSON.stringify({ contentType: 'audio/mpeg' }) }));
+
+    expect(result.statusCode).toBe(400);
+    expect(mockGetPresignedUploadUrl).not.toHaveBeenCalled();
+  });
+
+  it('devuelve 400 si el fichero supera los 20 MB', async () => {
+    mockGetUserIdFromToken.mockResolvedValue('user-1');
+
+    const result = await handler(
+      buildEvent({ body: JSON.stringify({ contentType: 'audio/mpeg', fileSize: 21 * 1024 * 1024 }) })
+    );
+
+    expect(result.statusCode).toBe(400);
+    expect(JSON.parse(result.body).message).toMatch(/20 MB/);
     expect(mockGetPresignedUploadUrl).not.toHaveBeenCalled();
   });
 });
