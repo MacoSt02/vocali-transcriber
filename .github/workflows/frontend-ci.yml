@@ -34,3 +34,15 @@ jobs:
         if: steps.filter.outputs.frontend == 'true'
       - run: npm run test:coverage
         if: steps.filter.outputs.frontend == 'true'
+      - name: Run Cypress e2e
+        if: steps.filter.outputs.frontend == 'true'
+        uses: cypress-io/github-action@v6
+        with:
+          working-directory: frontend
+          install: false
+          start: npm run dev
+          wait-on: 'http://localhost:5173'
+        env:
+          VITE_API_BASE_URL: https://api.e2e.test/dev
+          VITE_COGNITO_USER_POOL_ID: eu-west-1_e2etest
+          VITE_COGNITO_CLIENT_ID: e2e-test-client-id

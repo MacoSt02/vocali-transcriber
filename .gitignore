@@ -5,3 +5,5 @@ dist/
 .DS_Store
 *.log
 vocali-deploy_accessKeys.csv
+frontend/cypress/screenshots/
+frontend/cypress/videos/
